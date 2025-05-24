@@ -12,7 +12,8 @@
 
 namespace Metowolf;
 
-include __DIR__ . '/qrcdecoder.php';
+include __DIR__ . '/QrcDecode.php';
+use QrcDecode\Decoder;
 
 class Meting
 {
@@ -699,7 +700,7 @@ class Meting
         return $this->exec($api);
     }
 
-    public function url($id, $br = 320)
+    public function url($id, $br = 2147483)
     {
         switch ($this->server) {
             case 'netease':
@@ -708,7 +709,7 @@ class Meting
                     'url'    => 'https://music.163.com/api/song/enhance/player/url',
                     'body'   => array(
                         'ids' => array($id),
-                        'br'  => $br * 999999,
+                        'br'  => $br * 1000,
                     ),
                     'encode' => 'netease_AESCBC',
                     'decode' => 'netease_url',
@@ -847,12 +848,34 @@ class Meting
 
             case 'tencent':
                 $api = array(
-                    'method' => 'GET',
-                    'url'    => 'https://c.y.qq.com/lyric/fcgi-bin/fcg_query_lyric_new.fcg',
-                    'body'   => array(
-                        'songmid' => $id,
-                        'g_tk'    => '5381',
-                    ),
+                    'method' => 'POST',
+                    'url'    => 'https://u.y.qq.com/cgi-bin/musicu.fcg',
+                    'body'   => json_encode(array(
+                        'comm' => array(
+                          '_channelid'=>'0',
+                          '_os_version'=> '6.2.9200-2',
+                          'authst'=> '',
+                          'ct'=> '19',
+                          'cv'=> '1873',
+                          'patch'=> '118',
+                          'psrf_access_token_expiresAt'=> 0,
+                          'psrf_qqaccess_token'=> '',
+                          'psrf_qqopenid'=> '',
+                          'psrf_qqunionid'=> '',
+                          'tmeAppID'=> 'qqmusic',
+                          'tmeLoginType'=> 2,
+                          'uin'=> '0',
+                          'wid'=> '0',
+                        ),
+                        'req_1'=> array(
+                          'method'=> 'GetPlayLyricInfo',
+                          'module'=> 'music.musichallSong.PlayLyricInfo',
+                          'param'=> array(
+                            'songMID'=> $id,
+                            'qrc' => $this->yrc ? 1 : 0,
+                          ),
+                        )
+                    )),
                     'decode' => 'tencent_lyric',
                 );
                 break;
@@ -962,16 +985,27 @@ class Meting
         return $this->exec($api);
     }
 
-    public function pic($id, $size = 300)
+    public function pic($id, $size)
     {
         switch ($this->server) {
             case 'netease':
-                $url = 'https://p3.music.126.net/' . $this->netease_encryptId($id) . '/' . $id . '.jpg?param=';
+                if (isset($size) && !empty($size)) {
+                    $url = 'https://p3.music.126.net/' . $this->netease_encryptId($id) . '/' . $id . '.jpg?param=' . $size . 'x' . $size;
+                } else {
+                    $url = 'https://p3.music.126.net/' . $this->netease_encryptId($id) . '/' . $id . '.jpg';
+                };
                 break;
             case 'tencent':
-                $url = 'https://y.gtimg.cn/music/photo_new/T002R' . $size . 'x' . $size . 'M000' . $id . '.jpg?max_age=2592000';
+                if (isset($size) && !empty($size)) {
+                    $url = 'https://y.gtimg.cn/music/photo_new/T002R' . $size . 'x' . $size . 'M000' . $id . '.jpg';
+                } else {
+                    $url = 'https://y.gtimg.cn/music/photo_new/T002M000' . $id . '.jpg';
+                };
                 break;
             case 'xiami':
+                if (!isset($size) || empty($size)) {
+                    $size = 300;
+                };
                 $format = $this->format;
                 $data = $this->format(false)->song($id);
                 $this->format = $format;
@@ -980,6 +1014,9 @@ class Meting
                 $url = str_replace('http:', 'https:', $url) . '@1e_1c_100Q_' . $size . 'h_' . $size . 'w';
                 break;
             case 'kugou':
+                if (!isset($size) || empty($size)) {
+                    $size = 300;
+                };
                 $format = $this->format;
                 $data = $this->format(false)->song($id);
                 $this->format = $format;
@@ -988,6 +1025,9 @@ class Meting
                 $url = str_replace('{size}', '400', $url);
                 break;
             case 'baidu':
+                if (!isset($size) || empty($size)) {
+                    $size = 300;
+                };
                 $format = $this->format;
                 $data = $this->format(false)->song($id);
                 $this->format = $format;
@@ -995,6 +1035,9 @@ class Meting
                 $url = isset($data['songinfo']['pic_radio']) ? $data['songinfo']['pic_radio'] : $data['songinfo']['pic_small'];
                 break;
             case 'kuwo':
+                if (!isset($size) || empty($size)) {
+                    $size = 300;
+                };
                 $format = $this->format;
                 $data = $this->format(false)->song($id);
                 $this->format = $format;
@@ -1476,14 +1519,14 @@ class Meting
 
     private function tencent_lyric($result)
     {
-        $result = substr($result, 18, -1);
         $result = json_decode($result, true);
-        $data = array(
-            'lyric'  => isset($result['lyric']) ? base64_decode($result['lyric']) : '',
-            'tlyric' => isset($result['trans']) ? base64_decode($result['trans']) : '',
-        );
-
-        return json_encode($data, JSON_UNESCAPED_UNICODE);
+        $lrc = $result['req_1']['data']['lyric'];
+        if ($result['req_1']['data']['qrc'] == 0) {
+            return json_encode(array('lyric'  => base64_decode($lrc),
+            'tlyric' =>'',), JSON_UNESCAPED_UNICODE);
+        }
+        $decoder = new Decoder();
+        return json_encode(array('lyric'  => $decoder->decode($lrc),'tlyric' =>''), JSON_UNESCAPED_UNICODE);
     }
 
     private function xiami_lyric($result)
